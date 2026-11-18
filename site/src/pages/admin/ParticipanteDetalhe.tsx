@@ -47,7 +47,7 @@ export default function ParticipanteDetalhe() {
 
   return (
     <>
-      <Titulo sub={<>{p.email}{p.ra && <> · RA {p.ra}</>} · {p.user_id ? 'já acessou o site' : 'ainda não acessou o site'}</>}>
+      <Titulo sub={<>{p.email}{p.ra && <> · RA {p.ra}</>} · {p.tipo === 'externo' ? 'comunidade externa' : 'aluno(a) Unicamp'}</>}>
         {p.nome}
       </Titulo>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -134,17 +134,10 @@ function EditarCadastro({ p, cursos, aoSalvar }: { p: Participante; cursos: { id
     aoSalvar()
   }
 
-  async function desvincular() {
-    if (!confirm('Desvincular a conta de acesso? A pessoa precisará entrar de novo com o e-mail do cadastro.')) return
-    const { error } = await supabase.from('participantes').update({ user_id: null }).eq('id', p.id)
-    if (error) setMsg({ tom: 'vermelho', texto: msgErro(error) })
-    aoSalvar()
-  }
-
   return (
     <Cartao titulo="Cadastro">
       <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo="E-mail" dica="É por ele que a pessoa entra no site e recupera o histórico.">
+        <Campo rotulo="E-mail" dica="Conferido quando a pessoa se inscreve, cancela ou pede validação pelo RA.">
           <Entrada type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Campo>
         <CamposCadastro d={d} set={setD} cursos={cursos} podeEditarIdentidade />
@@ -153,7 +146,6 @@ function EditarCadastro({ p, cursos, aoSalvar }: { p: Participante; cursos: { id
         {msg && <Aviso tom={msg.tom}>{msg.texto}</Aviso>}
         <div className="flex flex-wrap gap-2">
           <Botao type="submit" carregando={ocupado}>Salvar cadastro</Botao>
-          {p.user_id && <Botao type="button" variante="fantasma" onClick={desvincular}>Desvincular conta</Botao>}
         </div>
       </form>
     </Cartao>

@@ -1,5 +1,5 @@
 -- Stub mínimo do que o Supabase já fornece (auth, papéis, schema extensions). Só para testes locais.
-create role anon; create role authenticated; create role service_role bypassrls;
+create role anon; create role authenticated; create role service_role bypassrls; create role supabase_auth_admin;
 create schema auth; create schema extensions;
 create table auth.users (id uuid primary key, email text);
 -- mesmas definições do Supabase: aceitam o formato antigo (claim.sub) e o do PostgREST atual (claims)

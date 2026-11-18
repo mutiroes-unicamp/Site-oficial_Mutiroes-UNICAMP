@@ -11,7 +11,6 @@ export interface Categoria { id: number; nome: string }
 
 export interface Participante {
   id: string
-  user_id: string | null
   nome: string
   email: string
   ra: string | null
@@ -52,8 +51,8 @@ export interface Evento {
   observacoes: string | null
 }
 
-/** Retorno de listar_eventos_aluno() */
-export interface EventoAluno {
+/** Retorno de listar_eventos_abertos() */
+export interface EventoPublico {
   id: number
   titulo: string
   descricao: string | null
@@ -66,8 +65,20 @@ export interface EventoAluno {
   inscricoes_ate: string | null
   status: StatusEvento
   perguntas: Pergunta[]
-  minha_inscricao: StatusInscricao | null
 }
+
+/** Retorno de consultar_ra() — sem e-mail/telefone de propósito */
+export interface ConsultaRa {
+  primeiro_nome: string
+  tipo: TipoParticipante
+  horas: Omit<Saldo, 'participante_id'>
+  participacoes: { evento_id: number; titulo: string; inicio: string; horas: number; status: StatusInscricao; status_evento: StatusEvento }[]
+  solicitacoes: { horas: number; status: StatusSolicitacao; solicitado_em: string; decidido_em: string | null; observacao: string | null }[]
+  ajustes: { horas: number; motivo: string; criado_em: string }[]
+}
+
+export interface Organizador { user_id: string; ra: string; nome: string; cargo: string | null; papel: Papel; criado_em: string }
+export interface Convite { ra: string; nome: string; cargo: string | null; papel: Papel; criado_em: string; expira_em: string; usado_em: string | null }
 
 export interface Inscricao {
   id: number

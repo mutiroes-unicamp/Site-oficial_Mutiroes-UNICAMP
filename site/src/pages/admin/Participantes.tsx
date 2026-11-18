@@ -31,18 +31,18 @@ export default function Participantes() {
     baixarCsv(
       'participantes-mutiroes',
       ['Nome', 'E-mail', 'RA', 'Vínculo', 'Curso', 'Ano de ingresso', 'Celular', 'Idade', 'Gênero', 'Na comunidade', 'Horas acumuladas',
-        'Horas validadas', 'Horas pendentes', 'Horas disponíveis', 'Conta vinculada', 'Cadastrado em', 'Observações'],
+        'Horas validadas', 'Horas pendentes', 'Horas disponíveis', 'Cadastrado em', 'Observações'],
       lista.map((p) => [
         p.nome, p.email, p.ra, p.tipo === 'externo' ? 'Externo' : 'Aluno Unicamp', p.curso, p.ano_ingresso, p.celular, p.idade, p.genero,
         p.na_comunidade, p.saldo?.horas_acumuladas, p.saldo?.horas_validadas, p.saldo?.horas_pendentes, p.saldo?.horas_disponiveis,
-        Boolean(p.user_id), fmtData(p.criado_em), p.observacoes,
+        fmtData(p.criado_em), p.observacoes,
       ]),
     )
   }
 
   return (
     <>
-      <Titulo sub={`${d.dados!.length} cadastros · ${d.dados!.filter((p) => p.user_id).length} já acessaram o site`}
+      <Titulo sub={`${d.dados!.length} cadastros · ${d.dados!.filter((p) => p.tipo === 'aluno_unicamp').length} alunos Unicamp`}
         acoes={<Botao variante="secundario" onClick={exportar}>Exportar CSV</Botao>}>
         Participantes
       </Titulo>

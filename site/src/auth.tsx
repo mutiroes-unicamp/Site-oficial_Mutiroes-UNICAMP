@@ -1,14 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase, ok } from './lib/supabase'
-import type { Papel, Participante } from './lib/tipos'
+import { supabase } from './lib/supabase'
+import type { Organizador } from './lib/tipos'
 
+/** Sessão só existe para a organização (RA + senha). Alunos não fazem login. */
 interface Estado {
   carregando: boolean
   sessao: Session | null
-  participante: Participante | null
-  papel: Papel | null
-  recarregar: () => Promise<void>
+  organizador: Organizador | null
   sair: () => Promise<void>
 }
 
@@ -17,12 +16,11 @@ const Ctx = createContext<Estado | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessao, setSessao] = useState<Session | null>(null)
   const [sessaoPronta, setSessaoPronta] = useState(false)
-  const [participante, setParticipante] = useState<Participante | null>(null)
-  const [papel, setPapel] = useState<Papel | null>(null)
+  const [organizador, setOrganizador] = useState<Organizador | null>(null)
   const [perfilPronto, setPerfilPronto] = useState(false)
 
   // Não chamar o Supabase dentro do callback de onAuthStateChange (pode travar);
-  // só guardamos a sessão e o efeito abaixo carrega o perfil.
+  // só guardamos a sessão e o efeito abaixo carrega o papel.
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSessao(data.session)
@@ -37,57 +35,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const uid = sessao?.user.id ?? null
 
-  const carregarPerfil = useCallback(async () => {
-    if (!uid) {
-      setParticipante(null)
-      setPapel(null)
-      setPerfilPronto(true)
-      return
-    }
-    try {
-      // vincula a conta a um cadastro importado com o mesmo e-mail (se houver)
-      const linhas = ok(await supabase.rpc('vincular_minha_conta')) as Participante[]
-      setParticipante(linhas[0] ?? null)
-      const org = ok(await supabase.from('organizadores').select('papel').eq('user_id', uid).maybeSingle()) as
-        | { papel: Papel }
-        | null
-      setPapel(org?.papel ?? null)
-    } catch (e) {
-      console.error('Falha ao carregar perfil', e)
-      setParticipante(null)
-      setPapel(null)
-    } finally {
-      setPerfilPronto(true)
+  useEffect(() => {
+    let vivo = true
+    setPerfilPronto(false)
+    ;(async () => {
+      if (!uid) {
+        setOrganizador(null)
+      } else {
+        const { data, error } = await supabase.from('organizadores').select('*').eq('user_id', uid).maybeSingle()
+        if (error) console.error('Falha ao carregar papel', error)
+        if (vivo) setOrganizador((data as Organizador | null) ?? null)
+      }
+      if (vivo) setPerfilPronto(true)
+    })()
+    return () => {
+      vivo = false
     }
   }, [uid])
-
-  useEffect(() => {
-    setPerfilPronto(false)
-    void carregarPerfil()
-  }, [carregarPerfil])
-
-  // Limpa o #access_token=... da barra de endereço depois do login por link
-  useEffect(() => {
-    if (sessao && window.location.hash.includes('access_token')) {
-      history.replaceState(null, '', window.location.pathname + window.location.search)
-    }
-  }, [sessao])
 
   const sair = useCallback(async () => {
     await supabase.auth.signOut()
   }, [])
 
   return (
-    <Ctx.Provider
-      value={{
-        carregando: !sessaoPronta || !perfilPronto,
-        sessao,
-        participante,
-        papel,
-        recarregar: carregarPerfil,
-        sair,
-      }}
-    >
+    <Ctx.Provider value={{ carregando: !sessaoPronta || !perfilPronto, sessao, organizador, sair }}>
       {children}
     </Ctx.Provider>
   )

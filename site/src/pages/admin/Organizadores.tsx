@@ -1,88 +1,140 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../../auth'
+import { limparRa, raValido } from '../../lib/acesso'
+import { fmtData } from '../../lib/formato'
 import { msgErro, ok, supabase } from '../../lib/supabase'
-import type { Papel } from '../../lib/tipos'
+import type { Convite, Organizador, Papel } from '../../lib/tipos'
 import { useDados } from '../../lib/useDados'
 import { Aviso, Botao, Campo, Cartao, Carregando, Entrada, Selecao, Titulo, Vazio } from '../../ui'
 
-interface Org { user_id: string; papel: Papel; criado_em: string }
-
-/** Só admin. Organizadores são contas que já entraram no site ao menos uma vez. */
+/** Só admin. Novos membros entram por convite (RA) e definem a senha no "Primeiro acesso". */
 export default function Organizadores() {
-  const { sessao } = useAuth()
+  const { organizador: eu } = useAuth()
   const d = useDados(async () => {
-    const orgs = ok(await supabase.from('organizadores').select('*').order('criado_em')) as Org[]
-    const ids = orgs.map((o) => o.user_id)
-    const pessoas = ids.length
-      ? (ok(await supabase.from('participantes').select('user_id, nome, email').in('user_id', ids)) as { user_id: string; nome: string; email: string }[])
-      : []
-    const porId = new Map(pessoas.map((p) => [p.user_id, p]))
-    return orgs.map((o) => ({ ...o, pessoa: porId.get(o.user_id) ?? null }))
+    const [orgs, convs] = await Promise.all([
+      supabase.from('organizadores').select('*').order('nome'),
+      supabase.from('convites_admin').select('*').is('usado_em', null).order('criado_em', { ascending: false }),
+    ])
+    return { orgs: ok(orgs) as Organizador[], convites: ok(convs) as Convite[] }
   }, [])
-  const [email, setEmail] = useState('')
+  const [ra, setRa] = useState('')
+  const [nome, setNome] = useState('')
+  const [cargo, setCargo] = useState('')
   const [papel, setPapel] = useState<Papel>('organizador')
   const [erro, setErro] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
 
-  async function adicionar(e: FormEvent) {
-    e.preventDefault()
+  async function executar(f: () => PromiseLike<{ error: unknown }>, sucesso?: string) {
     setErro(null)
-    const p = ok(
-      await supabase.from('participantes').select('user_id, nome').eq('email', email.trim().toLowerCase()).maybeSingle(),
-    ) as { user_id: string | null; nome: string } | null
-    if (!p) return setErro('Nenhum cadastro com esse e-mail. A pessoa precisa entrar no site e completar o cadastro primeiro.')
-    if (!p.user_id) return setErro(`${p.nome} tem cadastro, mas ainda não entrou no site. Peça para entrar uma vez e tente de novo.`)
-    const { error } = await supabase.from('organizadores').upsert({ user_id: p.user_id, papel })
-    if (error) return setErro(msgErro(error))
-    setEmail('')
-    void d.recarregar()
-  }
-
-  async function mudar(uid: string, novo: Papel | null) {
-    setErro(null)
-    if (uid === sessao?.user.id && !confirm('Você está alterando o seu próprio acesso. Continuar?')) return
-    const { error } = novo
-      ? await supabase.from('organizadores').update({ papel: novo }).eq('user_id', uid)
-      : await supabase.from('organizadores').delete().eq('user_id', uid)
+    setAviso(null)
+    const { error } = await f()
     if (error) setErro(msgErro(error))
+    else if (sucesso) setAviso(sucesso)
     void d.recarregar()
   }
+
+  async function convidar(e: FormEvent) {
+    e.preventDefault()
+    if (!raValido(ra)) return setErro('RA com 5 ou 6 dígitos.')
+    if (d.dados?.orgs.some((o) => o.ra === limparRa(ra))) return setErro('Esse RA já faz parte da equipe.')
+    await executar(
+      () => supabase.from('convites_admin').upsert({
+        ra: limparRa(ra), nome: nome.trim(), cargo: cargo.trim() || null, papel, usado_em: null,
+        criado_em: new Date().toISOString(), expira_em: new Date(Date.now() + 7 * 864e5).toISOString(),
+      }),
+      `Convite criado. Avise ${nome.trim().split(' ')[0]}: entrar em “Acessar como administrador › Primeiro acesso” com o RA ${limparRa(ra)} em até 7 dias.`,
+    )
+    setRa('')
+    setNome('')
+    setCargo('')
+  }
+
+  if (d.carregando && !d.dados) return <Carregando />
 
   return (
     <div className="mx-auto max-w-3xl">
       <Titulo sub="Quem pode criar eventos, marcar presença e validar horas. Admins também gerenciam a equipe.">Equipe da organização</Titulo>
       <Aviso>{erro ?? d.erro}</Aviso>
+      {aviso && <Aviso tom="verde">{aviso}</Aviso>}
+
       <Cartao className="mt-4" titulo="Membros">
-        {d.carregando && !d.dados ? <Carregando /> : !d.dados?.length ? <Vazio>Ninguém.</Vazio> : (
+        {!d.dados?.orgs.length ? <Vazio>Ninguém.</Vazio> : (
           <ul className="divide-y divide-stone-100">
-            {d.dados.map((o) => (
+            {d.dados.orgs.map((o) => (
               <li key={o.user_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                 <div>
-                  <div className="font-medium">{o.pessoa?.nome ?? '(sem cadastro de participante)'}</div>
-                  <div className="text-xs text-stone-500">{o.pessoa?.email ?? o.user_id}</div>
+                  <div className="font-medium">{o.nome}{o.user_id === eu?.user_id && <span className="ml-1 text-xs text-stone-500">(você)</span>}</div>
+                  <div className="text-xs text-stone-500">{o.cargo && <>{o.cargo} · </>}RA {o.ra} · desde {fmtData(o.criado_em)}</div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Selecao className="w-36 py-1" value={o.papel} onChange={(e) => mudar(o.user_id, e.target.value as Papel)} aria-label="Papel">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Selecao className="w-36 py-1" value={o.papel} aria-label="Papel"
+                    onChange={(e) => executar(() => supabase.from('organizadores').update({ papel: e.target.value as Papel }).eq('user_id', o.user_id))}>
                     <option value="organizador">Organizador</option>
                     <option value="admin">Admin</option>
                   </Selecao>
-                  <Botao variante="fantasma" onClick={() => confirm('Remover acesso de organização?') && mudar(o.user_id, null)}>Remover</Botao>
+                  <Botao variante="fantasma" className="px-2"
+                    onClick={() => confirm(`Redefinir o acesso de ${o.nome}? A senha atual deixa de valer e a pessoa cria outra em “Primeiro acesso”.`) &&
+                      executar(() => supabase.rpc('redefinir_acesso_admin', { p_user_id: o.user_id }),
+                        `Acesso de ${o.nome} redefinido. Avise para entrar em “Primeiro acesso” com o RA ${o.ra} em até 7 dias.`)}>
+                    Redefinir senha
+                  </Botao>
+                  <Botao variante="fantasma" className="px-2 text-red-700"
+                    onClick={() => confirm(`Remover ${o.nome} da organização?`) &&
+                      executar(() => supabase.rpc('remover_organizador', { p_user_id: o.user_id }))}>
+                    Remover
+                  </Botao>
                 </div>
               </li>
             ))}
           </ul>
         )}
       </Cartao>
-      <Cartao className="mt-6" titulo="Adicionar membro">
-        <form onSubmit={adicionar} className="grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
-          <Campo rotulo="E-mail do cadastro"><Entrada type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Campo>
+
+      {!!d.dados?.convites.length && (
+        <Cartao className="mt-6" titulo="Convites aguardando o primeiro acesso">
+          <ul className="divide-y divide-stone-100 text-sm">
+            {d.dados.convites.map((c) => {
+              const expirado = new Date(c.expira_em).getTime() < Date.now()
+              return (
+                <li key={c.ra} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div>
+                    <div className="font-medium">{c.nome} <span className="text-xs text-stone-500">({[c.cargo, c.papel].filter(Boolean).join(' · ')})</span></div>
+                    <div className={`text-xs ${expirado ? 'text-red-700' : 'text-stone-500'}`}>
+                      RA {c.ra} · {expirado ? 'expirado em' : 'vale até'} {fmtData(c.expira_em)}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    {expirado && (
+                      <Botao variante="secundario" className="px-2 py-1"
+                        onClick={() => executar(() => supabase.from('convites_admin').update({ expira_em: new Date(Date.now() + 7 * 864e5).toISOString() }).eq('ra', c.ra))}>
+                        Renovar
+                      </Botao>
+                    )}
+                    <Botao variante="fantasma" className="px-2 py-1" onClick={() => executar(() => supabase.from('convites_admin').delete().eq('ra', c.ra))}>
+                      Cancelar convite
+                    </Botao>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </Cartao>
+      )}
+
+      <Cartao className="mt-6" titulo="Convidar membro">
+        <form onSubmit={convidar} className="grid gap-3 sm:grid-cols-[8rem_1fr_9rem_9rem_auto] sm:items-end">
+          <Campo rotulo="RA"><Entrada inputMode="numeric" required value={ra} onChange={(e) => setRa(limparRa(e.target.value))} /></Campo>
+          <Campo rotulo="Nome"><Entrada required value={nome} onChange={(e) => setNome(e.target.value)} /></Campo>
+          <Campo rotulo="Cargo"><Entrada value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Opcional" /></Campo>
           <Campo rotulo="Papel">
             <Selecao value={papel} onChange={(e) => setPapel(e.target.value as Papel)}>
               <option value="organizador">Organizador</option>
               <option value="admin">Admin</option>
             </Selecao>
           </Campo>
-          <Botao type="submit">Adicionar</Botao>
+          <Botao type="submit">Convidar</Botao>
         </form>
+        <p className="mt-2 text-xs text-stone-500">A pessoa define a própria senha; ninguém precisa repassar senha.</p>
       </Cartao>
     </div>
   )

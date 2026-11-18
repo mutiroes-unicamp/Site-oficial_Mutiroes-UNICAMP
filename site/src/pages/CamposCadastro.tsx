@@ -41,12 +41,14 @@ export function deParticipante(p: {
 
 /** Campos comuns ao autocadastro, à edição pelo aluno e à edição pela organização. */
 export function CamposCadastro({
-  d, set, cursos, podeEditarIdentidade,
+  d, set, cursos, podeEditarIdentidade, mostrarIdentidade = true,
 }: {
   d: DadosCadastro
   set: (d: DadosCadastro) => void
   cursos: Curso[]
   podeEditarIdentidade: boolean
+  /** false: vínculo e RA ficam fora (a inscrição pública pede antes) */
+  mostrarIdentidade?: boolean
 }) {
   const up = (k: keyof DadosCadastro) => (e: { target: { value: string } }) => set({ ...d, [k]: e.target.value })
   const ano = new Date().getFullYear()
@@ -57,13 +59,13 @@ export function CamposCadastro({
           <Entrada required value={d.nome} onChange={up('nome')} autoComplete="name" />
         </Campo>
       </div>
-      <Campo rotulo="Vínculo">
+      {mostrarIdentidade && <Campo rotulo="Vínculo">
         <Selecao value={d.tipo} onChange={up('tipo')} disabled={!podeEditarIdentidade}>
           <option value="aluno_unicamp">Aluno(a) da Unicamp</option>
           <option value="externo">Comunidade externa</option>
         </Selecao>
-      </Campo>
-      {d.tipo === 'aluno_unicamp' && (
+      </Campo>}
+      {mostrarIdentidade && d.tipo === 'aluno_unicamp' && (
         <Campo rotulo="RA" dica={podeEditarIdentidade ? undefined : 'Para corrigir o RA, fale com a organização.'}>
           <Entrada
             required inputMode="numeric" pattern="\d{5,6}" title="5 ou 6 dígitos" value={d.ra}

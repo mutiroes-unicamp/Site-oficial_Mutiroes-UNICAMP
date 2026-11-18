@@ -10,6 +10,13 @@
 --
 -- Regra central: horas NUNCA são digitadas; são calculadas pela view saldo_horas.
 -- Toda tabela tem RLS habilitado. Sem policy = acesso negado.
+--
+-- Modelo de acesso:
+--   * Alunos/voluntários NÃO têm login. Consultam, inscrevem-se e pedem validação
+--     pelo RA, via funções RPC (migration funcoes_rpc), que conferem o e-mail
+--     cadastrado nas ações que alteram dados. Tabelas: só a organização lê.
+--   * Organização entra com RA + senha (Supabase Auth, e-mail técnico
+--     admin.<RA>@mutiroes.invalid). Só cria conta quem tem convite em convites_admin.
 -- RG e CPF dos Forms antigos NÃO são armazenados (decisão da organização, LGPD).
 -- =====================================================================
 
@@ -60,7 +67,6 @@ create table public.categorias_evento (
 -- ---------------------------------------------------------------------
 create table public.participantes (
   id             uuid primary key default gen_random_uuid(),
-  user_id        uuid unique references auth.users (id) on delete set null,  -- vinculado no 1º login
   nome           text not null check (nome = btrim(nome) and nome <> ''),
   email          extensions.citext not null unique
                    check (email::text ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
@@ -163,8 +169,24 @@ create index solicitacoes_participante_idx on public.solicitacoes_validacao (par
 -- ---------------------------------------------------------------------
 create table public.organizadores (
   user_id   uuid primary key references auth.users (id) on delete cascade,
+  ra        text not null unique check (ra ~ '^\d{5,6}$'),
+  nome      text not null check (btrim(nome) <> ''),
+  cargo     text,                -- título na equipe (ex.: Capitã); informativo
   papel     text not null default 'organizador' check (papel in ('organizador', 'admin')),
   criado_em timestamptz not null default now()
+);
+
+-- Convite para virar organizador. A pessoa conclui no "Primeiro acesso" do site,
+-- definindo a própria senha (ninguém precisa repassar senha).
+create table public.convites_admin (
+  ra         text primary key check (ra ~ '^\d{5,6}$'),
+  nome       text not null check (btrim(nome) <> ''),
+  cargo      text,
+  papel      text not null default 'organizador' check (papel in ('organizador', 'admin')),
+  criado_por uuid references auth.users (id) on delete set null default auth.uid(),
+  criado_em  timestamptz not null default now(),
+  expira_em  timestamptz not null default now() + interval '7 days',
+  usado_em   timestamptz
 );
 
 create or replace function privado.is_organizador()
@@ -182,12 +204,44 @@ as $$
                  where user_id = (select auth.uid()) and papel = 'admin');
 $$;
 
-create or replace function privado.meu_participante_id()
-returns uuid
-language sql stable security definer set search_path = ''
-as $$
-  select id from public.participantes where user_id = (select auth.uid());
+-- ---------------------------------------------------------------------
+-- Contas da organização: só nascem de um convite válido
+-- ---------------------------------------------------------------------
+create or replace function privado.ra_do_email_admin(p_email text)
+returns text language sql immutable set search_path = '' as $$
+  select substring(lower(p_email) from '^admin\.(\d{5,6})@mutiroes\.invalid$');
 $$;
+
+-- Bloqueia qualquer cadastro no Auth que não seja um convite em aberto
+-- (o cadastro público do Supabase fica ligado, mas não serve para nada sem convite).
+create or replace function privado.antes_criar_usuario()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_ra text := privado.ra_do_email_admin(new.email);
+begin
+  if v_ra is null or not exists (
+       select 1 from public.convites_admin
+        where ra = v_ra and usado_em is null and expira_em > now()) then
+    raise exception 'Cadastro não permitido: não há convite de administrador em aberto para este RA';
+  end if;
+  return new;
+end $$;
+
+create or replace function privado.depois_criar_usuario()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_conv public.convites_admin;
+begin
+  update public.convites_admin set usado_em = now()
+   where ra = privado.ra_do_email_admin(new.email) and usado_em is null
+  returning * into v_conv;
+  insert into public.organizadores (user_id, ra, nome, cargo, papel)
+  values (new.id, v_conv.ra, v_conv.nome, v_conv.cargo, v_conv.papel);
+  return new;
+end $$;
+
+create trigger mutiroes_antes_criar_usuario before insert on auth.users
+  for each row execute function privado.antes_criar_usuario();
+create trigger mutiroes_depois_criar_usuario after insert on auth.users
+  for each row execute function privado.depois_criar_usuario();
 
 -- ---------------------------------------------------------------------
 -- Triggers
@@ -206,32 +260,8 @@ create trigger eventos_atualizado before update on public.eventos
 create trigger inscricoes_atualizado before update on public.inscricoes
   for each row execute function public.tocar_atualizado_em();
 
--- O próprio participante só altera dados de contato; RA, e-mail, tipo, vínculo e
--- observações só a organização. (Trigger em vez de GRANT por coluna, porque
--- organização e alunos usam o mesmo papel 'authenticated'.)
-create or replace function privado.proteger_campos_participante()
-returns trigger language plpgsql set search_path = '' as $$
-begin
-  if (select auth.uid()) is not null and not (select privado.is_organizador())
-     and (new.ra is distinct from old.ra
-          or new.email is distinct from old.email
-          or new.tipo is distinct from old.tipo
-          or (new.user_id is distinct from old.user_id
-              -- exceção: 1º login assumindo o próprio cadastro (mesmo e-mail da conta)
-              and not (old.user_id is null and new.user_id = (select auth.uid())
-                       and lower(new.email::text) = lower((select auth.jwt()) ->> 'email')))
-          or new.observacoes is distinct from old.observacoes) then
-    raise exception 'Apenas a organização pode alterar RA, e-mail, tipo ou vínculo de conta';
-  end if;
-  return new;
-end $$;
-
-create trigger participantes_protegidos before update on public.participantes
-  for each row execute function privado.proteger_campos_participante();
-
 -- E-mail sempre minúsculo e nome sem espaços sobrando: buscas por e-mail não
 -- dependem do operador do citext estar no search_path da API.
--- (dispara antes de "participantes_protegidos" — ordem alfabética)
 create or replace function privado.normalizar_participante()
 returns trigger language plpgsql set search_path = '' as $$
 begin
@@ -301,7 +331,7 @@ left join lateral (
   from public.solicitacoes_validacao s where s.participante_id = p.id
 ) sv on true;
 
--- Contagens por evento (organização; para alunos o RLS limita às próprias inscrições)
+-- Contagens por evento (organização)
 create view public.resumo_eventos with (security_invoker = true) as
 select
   e.id as evento_id,
@@ -326,59 +356,64 @@ alter table public.inscricoes             enable row level security;
 alter table public.ajustes_horas          enable row level security;
 alter table public.solicitacoes_validacao enable row level security;
 alter table public.organizadores          enable row level security;
+alter table public.convites_admin         enable row level security;
 
 -- Referências: leitura para todos; escrita só organização
 create policy cursos_leitura on public.cursos for select to anon, authenticated using (true);
-create policy cursos_org on public.cursos for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy cursos_org_inserir on public.cursos for insert to authenticated with check ((select privado.is_organizador()));
+create policy cursos_org_alterar on public.cursos for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy cursos_org_excluir on public.cursos for delete to authenticated using ((select privado.is_organizador()));
 
 create policy categorias_leitura on public.categorias_evento for select to anon, authenticated using (true);
-create policy categorias_org on public.categorias_evento for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy categorias_org_inserir on public.categorias_evento for insert to authenticated with check ((select privado.is_organizador()));
+create policy categorias_org_alterar on public.categorias_evento for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy categorias_org_excluir on public.categorias_evento for delete to authenticated using ((select privado.is_organizador()));
 
 -- Eventos: públicos depois de divulgados; organização vê e edita tudo
 create policy eventos_leitura on public.eventos for select to anon, authenticated
   using (status <> 'planejado' or (select privado.is_organizador()));
-create policy eventos_org on public.eventos for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy eventos_org_inserir on public.eventos for insert to authenticated with check ((select privado.is_organizador()));
+create policy eventos_org_alterar on public.eventos for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy eventos_org_excluir on public.eventos for delete to authenticated using ((select privado.is_organizador()));
 
--- Participantes: cada um vê o próprio cadastro; organização vê todos
+-- Participantes, inscrições, ajustes e solicitações: tabelas só da organização.
+-- Alunos acessam o que é seu pelas funções RPC por RA.
 create policy participantes_leitura on public.participantes for select to authenticated
-  using (user_id = (select auth.uid()) or (select privado.is_organizador()));
--- Autocadastro no 1º login, com o e-mail da própria conta
-create policy participantes_autocadastro on public.participantes for insert to authenticated
-  with check (user_id = (select auth.uid())
-              and email::text = lower((select auth.jwt()) ->> 'email')
-              and observacoes is null);
-create policy participantes_editar_proprio on public.participantes for update to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-create policy participantes_org on public.participantes for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+  using ((select privado.is_organizador()));
+create policy participantes_org_inserir on public.participantes for insert to authenticated with check ((select privado.is_organizador()));
+create policy participantes_org_alterar on public.participantes for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy participantes_org_excluir on public.participantes for delete to authenticated using ((select privado.is_organizador()));
 
--- Inscrições: aluno vê as suas; inscrever/cancelar só pelas funções RPC
--- (que checam prazo, vagas e perguntas obrigatórias); presença só a organização
 create policy inscricoes_leitura on public.inscricoes for select to authenticated
-  using (participante_id = (select privado.meu_participante_id()) or (select privado.is_organizador()));
-create policy inscricoes_org on public.inscricoes for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+  using ((select privado.is_organizador()));
+create policy inscricoes_org_inserir on public.inscricoes for insert to authenticated with check ((select privado.is_organizador()));
+create policy inscricoes_org_alterar on public.inscricoes for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy inscricoes_org_excluir on public.inscricoes for delete to authenticated using ((select privado.is_organizador()));
 
--- Ajustes: aluno vê os seus; só organização cria
 create policy ajustes_leitura on public.ajustes_horas for select to authenticated
-  using (participante_id = (select privado.meu_participante_id()) or (select privado.is_organizador()));
-create policy ajustes_org on public.ajustes_horas for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+  using ((select privado.is_organizador()));
+create policy ajustes_org_inserir on public.ajustes_horas for insert to authenticated with check ((select privado.is_organizador()));
+create policy ajustes_org_alterar on public.ajustes_horas for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy ajustes_org_excluir on public.ajustes_horas for delete to authenticated using ((select privado.is_organizador()));
 
--- Solicitações: aluno vê as suas e cria pela RPC solicitar_validacao (checa saldo)
 create policy solicitacoes_leitura on public.solicitacoes_validacao for select to authenticated
-  using (participante_id = (select privado.meu_participante_id()) or (select privado.is_organizador()));
-create policy solicitacoes_org on public.solicitacoes_validacao for all to authenticated
-  using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+  using ((select privado.is_organizador()));
+create policy solicitacoes_org_inserir on public.solicitacoes_validacao for insert to authenticated with check ((select privado.is_organizador()));
+create policy solicitacoes_org_alterar on public.solicitacoes_validacao for update to authenticated using ((select privado.is_organizador())) with check ((select privado.is_organizador()));
+create policy solicitacoes_org_excluir on public.solicitacoes_validacao for delete to authenticated using ((select privado.is_organizador()));
 
 -- Organizadores: cada um vê o próprio papel (organização vê todos); só admin gerencia
 create policy organizadores_leitura on public.organizadores for select to authenticated
   using (user_id = (select auth.uid()) or (select privado.is_organizador()));
-create policy organizadores_admin on public.organizadores for all to authenticated
-  using ((select privado.is_admin())) with check ((select privado.is_admin()));
+create policy organizadores_admin_inserir on public.organizadores for insert to authenticated with check ((select privado.is_admin()));
+create policy organizadores_admin_alterar on public.organizadores for update to authenticated using ((select privado.is_admin())) with check ((select privado.is_admin()));
+create policy organizadores_admin_excluir on public.organizadores for delete to authenticated using ((select privado.is_admin()));
+
+-- Convites: organização vê; só admin cria/altera/remove
+create policy convites_leitura on public.convites_admin for select to authenticated using ((select privado.is_organizador()));
+create policy convites_admin_inserir on public.convites_admin for insert to authenticated with check ((select privado.is_admin()));
+create policy convites_admin_alterar on public.convites_admin for update to authenticated using ((select privado.is_admin())) with check ((select privado.is_admin()));
+create policy convites_admin_excluir on public.convites_admin for delete to authenticated using ((select privado.is_admin()));
 
 -- =====================================================================
 -- GRANTs explícitos: desde out/2026 o Supabase não expõe tabelas novas
@@ -390,10 +425,26 @@ grant select on public.eventos, public.cursos, public.categorias_evento to anon;
 
 grant select, insert, update, delete on
   public.cursos, public.categorias_evento, public.participantes, public.eventos,
-  public.inscricoes, public.ajustes_horas, public.solicitacoes_validacao, public.organizadores
+  public.inscricoes, public.ajustes_horas, public.solicitacoes_validacao, public.organizadores,
+  public.convites_admin
   to authenticated, service_role;
 grant select on public.saldo_horas, public.resumo_eventos to authenticated, service_role;
 grant usage, select on all sequences in schema public to authenticated, service_role;
 
+-- Defesa em profundidade: projetos/stacks com privilégios padrão antigos concedem tudo
+-- a anon/authenticated em tabelas novas. Tiramos explicitamente o que não deve existir:
+-- o público só lê eventos/cursos/categorias (o resto passa pelas funções RPC), e
+-- ninguém da API faz TRUNCATE/TRIGGER/REFERENCES (TRUNCATE ignora RLS).
+revoke all on public.participantes, public.inscricoes, public.ajustes_horas,
+  public.solicitacoes_validacao, public.organizadores, public.convites_admin,
+  public.saldo_horas, public.resumo_eventos
+  from anon;
+revoke insert, update, delete on public.eventos, public.cursos, public.categorias_evento from anon;
+revoke truncate, trigger, references on all tables in schema public from anon, authenticated;
+
 revoke execute on all functions in schema privado from public;
 grant execute on all functions in schema privado to anon, authenticated, service_role;
+-- o servidor de login (GoTrue) roda como supabase_auth_admin e dispara os triggers de auth.users
+grant usage on schema privado to supabase_auth_admin;
+grant execute on function privado.antes_criar_usuario(), privado.depois_criar_usuario(),
+  privado.ra_do_email_admin(text) to supabase_auth_admin;
