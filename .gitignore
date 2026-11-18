@@ -1,0 +1,35 @@
+# ------------------------------------------------------------------
+# DADOS PESSOAIS — nunca versionar (repositório público / LGPD)
+# ------------------------------------------------------------------
+Data/
+dados/
+*.xlsx
+*.xls
+*.csv
+*.ods
+*.sql.gz
+*.dump
+backup*/
+
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+
+# Front-end
+node_modules/
+dist/

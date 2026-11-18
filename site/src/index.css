@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-marca-50: #ecfdf3;
+  --color-marca-100: #d1fadf;
+  --color-marca-600: #16803c;
+  --color-marca-700: #116430;
+  --color-marca-800: #0d4d25;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { @apply bg-stone-50 text-stone-900 antialiased; }
+
+/* tabelas largas rolam dentro do cartão, não a página */
+.tabela { @apply w-full text-sm border-collapse; }
+.tabela th { @apply text-left font-medium text-stone-500 px-3 py-2 border-b border-stone-200 whitespace-nowrap bg-stone-50; }
+.tabela td { @apply px-3 py-2 border-b border-stone-100 align-top; }
+.tabela tr:hover td { @apply bg-stone-50; }
