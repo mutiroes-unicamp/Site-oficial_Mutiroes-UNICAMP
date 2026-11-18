@@ -31,9 +31,7 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          # Settings > Secrets and variables > Actions > Variables (são públicas por natureza)
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          # URL e chave publicável vêm de site/.env.production (públicas por natureza)
           VITE_BASE: ${{ vars.VITE_BASE || format('/{0}/', github.event.repository.name) }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
