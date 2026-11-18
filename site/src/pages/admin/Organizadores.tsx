@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../../auth'
-import { limparRa, raValido } from '../../lib/acesso'
+import { CARGOS, cargoValida, limparRa, raValido } from '../../lib/acesso'
 import { fmtData } from '../../lib/formato'
 import { msgErro, ok, supabase } from '../../lib/supabase'
 import type { Convite, Organizador, Papel } from '../../lib/tipos'
@@ -10,6 +10,7 @@ import { Aviso, Botao, Campo, Cartao, Carregando, Entrada, Selecao, Titulo, Vazi
 /** Só admin. Novos membros entram por convite (RA) e definem a senha no "Primeiro acesso". */
 export default function Organizadores() {
   const { organizador: eu } = useAuth()
+  const euValido = cargoValida(eu?.cargo)
   const d = useDados(async () => {
     const [orgs, convs] = await Promise.all([
       supabase.from('organizadores').select('*').order('nome'),
@@ -67,6 +68,8 @@ export default function Organizadores() {
                   <div className="text-xs text-stone-500">{o.cargo && <>{o.cargo} · </>}RA {o.ra} · desde {fmtData(o.criado_em)}</div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <SeletorCargo valor={o.cargo} podeValidacao={euValido}
+                    aoMudar={(c) => executar(() => supabase.from('organizadores').update({ cargo: c }).eq('user_id', o.user_id))} />
                   <Selecao className="w-36 py-1" value={o.papel} aria-label="Papel"
                     onChange={(e) => executar(() => supabase.from('organizadores').update({ papel: e.target.value as Papel }).eq('user_id', o.user_id))}>
                     <option value="organizador">Organizador</option>
@@ -125,7 +128,7 @@ export default function Organizadores() {
         <form onSubmit={convidar} className="grid gap-3 sm:grid-cols-[8rem_1fr_9rem_9rem_auto] sm:items-end">
           <Campo rotulo="RA"><Entrada inputMode="numeric" required value={ra} onChange={(e) => setRa(limparRa(e.target.value))} /></Campo>
           <Campo rotulo="Nome"><Entrada required value={nome} onChange={(e) => setNome(e.target.value)} /></Campo>
-          <Campo rotulo="Cargo"><Entrada value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Opcional" /></Campo>
+          <Campo rotulo="Cargo"><SeletorCargo valor={cargo} podeValidacao={euValido} aoMudar={(c) => setCargo(c ?? '')} /></Campo>
           <Campo rotulo="Papel">
             <Selecao value={papel} onChange={(e) => setPapel(e.target.value as Papel)}>
               <option value="organizador">Organizador</option>
@@ -134,8 +137,26 @@ export default function Organizadores() {
           </Campo>
           <Botao type="submit">Convidar</Botao>
         </form>
-        <p className="mt-2 text-xs text-stone-500">A pessoa define a própria senha; ninguém precisa repassar senha.</p>
+        <p className="mt-2 text-xs text-stone-500">
+          A pessoa define a própria senha; ninguém precisa repassar senha. Só Capitã(o) e Vice-capitã(o) veem a aba Validações
+          {euValido ? '.' : ', e só eles podem atribuir esses cargos.'}
+        </p>
       </Cartao>
     </div>
+  )
+}
+
+/** Cargos: lista fixa (os de validação só aparecem para quem já valida, como no banco). */
+function SeletorCargo({ valor, podeValidacao, aoMudar }: { valor: string | null; podeValidacao: boolean; aoMudar: (c: string | null) => void }) {
+  const atualValida = cargoValida(valor)
+  const bloqueado = atualValida && !podeValidacao
+  return (
+    <Selecao className="w-40 py-1" aria-label="Cargo" value={valor ?? ''} disabled={bloqueado}
+      title={bloqueado ? 'Só Capitã(o) ou Vice-capitã(o) podem alterar este cargo' : undefined}
+      onChange={(e) => aoMudar(e.target.value || null)}>
+      <option value="">Sem cargo</option>
+      {CARGOS.filter((c) => podeValidacao || c === valor).map((c) => <option key={c}>{c}</option>)}
+      {valor && !CARGOS.includes(valor as (typeof CARGOS)[number]) && <option>{valor}</option>}
+    </Selecao>
   )
 }

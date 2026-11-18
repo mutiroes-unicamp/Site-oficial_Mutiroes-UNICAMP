@@ -27,3 +27,12 @@ export function salvarRa(ra: string | null) {
     /* navegação privada etc.: segue sem lembrar */
   }
 }
+
+/** Cargos da equipe. Só os que validam horas têm efeito no banco (privado.cargo_valida). */
+export const CARGOS = ['Capitã', 'Capitão', 'Vice-capitã', 'Vice-capitão'] as const
+
+/** Mesmo critério do banco: capitã(o) ou vice-capitã(o), com ou sem acento. */
+export function cargoValida(cargo: string | null | undefined): boolean {
+  const c = (cargo ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return ['capita', 'capitao', 'vice-capita', 'vice-capitao'].includes(c)
+}

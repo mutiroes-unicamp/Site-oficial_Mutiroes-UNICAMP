@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router'
 import { useAuth } from './auth'
+import { cargoValida } from './lib/acesso'
 
 const BASE = import.meta.env.BASE_URL
 
@@ -29,7 +30,7 @@ export default function Layout() {
       <ItemMenu para="/admin" fim onClick={fechar}>Painel</ItemMenu>
       <ItemMenu para="/admin/eventos" onClick={fechar}>Eventos</ItemMenu>
       <ItemMenu para="/admin/participantes" onClick={fechar}>Participantes</ItemMenu>
-      <ItemMenu para="/admin/solicitacoes" onClick={fechar}>Validações</ItemMenu>
+      {cargoValida(organizador.cargo) && <ItemMenu para="/admin/solicitacoes" onClick={fechar}>Validações</ItemMenu>}
       <ItemMenu para="/admin/planilha" onClick={fechar}>Planilha</ItemMenu>
       {organizador.papel === 'admin' && <ItemMenu para="/admin/equipe" onClick={fechar}>Equipe</ItemMenu>}
       <ItemMenu para="/" fim onClick={fechar}>Site público</ItemMenu>

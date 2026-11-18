@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
+import { useAuth } from '../../auth'
+import { cargoValida } from '../../lib/acesso'
 import { carregarCursos } from '../../lib/admin'
 import {
   fmtData, fmtDataHora, fmtHoras, ROTULO_INSCRICAO, ROTULO_SOLICITACAO, TOM_SOLICITACAO,
@@ -14,6 +16,8 @@ type InscEv = Inscricao & { eventos: Pick<Evento, 'id' | 'titulo' | 'inicio' | '
 
 export default function ParticipanteDetalhe() {
   const { id } = useParams()
+  const { organizador } = useAuth()
+  const podeValidar = cargoValida(organizador?.cargo)
   const d = useDados(async () => {
     const [p, s, i, a, so, cursos] = await Promise.all([
       supabase.from('participantes').select('*').eq('id', id!).single(),
@@ -89,23 +93,25 @@ export default function ParticipanteDetalhe() {
 
           <Ajustes pid={p.id} ajustes={ajustes} acao={acao} />
 
-          <Cartao titulo="Solicitações de validação">
-            {solicitacoes.length === 0 ? <Vazio>Nenhuma.</Vazio> : (
-              <ul className="divide-y divide-stone-100 text-sm">
-                {solicitacoes.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                    <div>
-                      <span className="font-medium">{fmtHoras(s.horas)}</span>{' '}
-                      <span className="text-xs text-stone-500">em {fmtDataHora(s.solicitado_em)}</span>
-                      {s.observacao && <div className="text-xs text-stone-500">{s.observacao}</div>}
-                    </div>
-                    <Selo tom={TOM_SOLICITACAO[s.status]}>{ROTULO_SOLICITACAO[s.status]}</Selo>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-2 text-xs text-stone-500">Aprove ou recuse em <Link className="underline" to="/admin/solicitacoes">Validações</Link>.</p>
-          </Cartao>
+          {podeValidar && (
+            <Cartao titulo="Solicitações de validação">
+              {solicitacoes.length === 0 ? <Vazio>Nenhuma.</Vazio> : (
+                <ul className="divide-y divide-stone-100 text-sm">
+                  {solicitacoes.map((s) => (
+                    <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <div>
+                        <span className="font-medium">{fmtHoras(s.horas)}</span>{' '}
+                        <span className="text-xs text-stone-500">em {fmtDataHora(s.solicitado_em)}</span>
+                        {s.observacao && <div className="text-xs text-stone-500">{s.observacao}</div>}
+                      </div>
+                      <Selo tom={TOM_SOLICITACAO[s.status]}>{ROTULO_SOLICITACAO[s.status]}</Selo>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-xs text-stone-500">Aprove ou recuse em <Link className="underline" to="/admin/solicitacoes">Validações</Link>.</p>
+            </Cartao>
+          )}
         </div>
       </div>
     </>

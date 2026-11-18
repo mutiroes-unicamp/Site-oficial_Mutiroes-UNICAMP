@@ -148,3 +148,44 @@ select public.remover_organizador('00000000-0000-0000-0000-00000000000a'); rollb
 \echo '=== 21. aluno sem RA -> FALHA (constraint) | e-mail duplicado com maiúsculas -> FALHA'
 insert into public.participantes (nome, email, tipo) values ('Sem RA', 'semra@x.br', 'aluno_unicamp');
 insert into public.participantes (nome, email, tipo) values ('Dup', 'EXT@Gmail.com', 'externo');
+
+-- ---------------------------------------------------------------------
+-- Validação restrita a Capitã(o) / Vice-capitã(o)  (migration validacao_por_cargo)
+-- ---------------------------------------------------------------------
+\echo '=== 22. admin SEM cargo: vê 0 solicitações, mas o saldo de C mostra 3 h pendentes'
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+select (select count(*) from public.solicitacoes_validacao) as solicitacoes_visiveis,
+       (select horas_pendentes from public.saldo_horas s join public.participantes p on p.id = s.participante_id where p.ra = '333333') as pendentes_no_saldo;
+rollback;
+
+\echo '=== 23. admin sem cargo: aprova -> 0 linhas | se dá "Capitã" -> FALHA | convida "Vice-capitão" -> FALHA | cargo "Tesoureira" -> ok'
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+update public.solicitacoes_validacao set status = 'aprovada'; commit;
+select status from public.solicitacoes_validacao;
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+update public.organizadores set cargo = 'Capitã' where ra = '444444'; rollback;
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+insert into public.convites_admin (ra, nome, cargo, papel) values ('777001', 'Vice', 'Vice-capitão', 'admin'); rollback;
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+update public.organizadores set cargo = 'Tesoureira' where ra = '444444' returning cargo; commit;
+
+\echo '=== 24. SQL Editor define "capitã" (minúscula) -> admin passa a ver 1 solicitação e aprova'
+update public.organizadores set cargo = 'capitã' where ra = '444444';
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+select count(*) as solicitacoes_visiveis from public.solicitacoes_validacao;
+update public.solicitacoes_validacao set status = 'aprovada' where status = 'pendente' returning status; commit;
+
+\echo '=== 25. capitã convida Vice-capitão -> ok; ele cria conta e vê as solicitações (1)'
+begin; select pg_temp.como('00000000-0000-0000-0000-00000000000a') \gset x_
+insert into public.convites_admin (ra, nome, cargo, papel) values ('777001', 'Vice Teste', 'Vice-capitão', 'admin') returning cargo; commit;
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000771', 'admin.777001@mutiroes.invalid');
+begin; select pg_temp.como('00000000-0000-0000-0000-000000000771') \gset x_
+select o.cargo, (select count(*) from public.solicitacoes_validacao) as solicitacoes_visiveis
+  from public.organizadores o where o.ra = '777001'; rollback;
+
+\echo '=== 26. admin SEM cargo redefine o acesso do vice -> ok, convite reaberto mantém "Vice-capitão"'
+insert into public.convites_admin (ra, nome, papel) values ('777002', 'Admin Sem Cargo', 'admin');
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000772', 'admin.777002@mutiroes.invalid');
+begin; select pg_temp.como('00000000-0000-0000-0000-000000000772') \gset x_
+select public.redefinir_acesso_admin('00000000-0000-0000-0000-000000000771'); commit;
+select cargo, usado_em is null as reaberto from public.convites_admin where ra = '777001';

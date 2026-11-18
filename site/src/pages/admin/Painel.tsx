@@ -1,4 +1,6 @@
 import { Link } from 'react-router'
+import { useAuth } from '../../auth'
+import { cargoValida } from '../../lib/acesso'
 import { carregarEventos } from '../../lib/admin'
 import { fmtDataHora, fmtHoras, ROTULO_EVENTO, TOM_EVENTO } from '../../lib/formato'
 import { supabase } from '../../lib/supabase'
@@ -6,6 +8,8 @@ import { useDados } from '../../lib/useDados'
 import { Aviso, Cartao, Carregando, Numero, Selo, Titulo, Vazio } from '../../ui'
 
 export default function Painel() {
+  const { organizador } = useAuth()
+  const podeValidar = cargoValida(organizador?.cargo)
   const d = useDados(async () => {
     const [eventos, part, pend] = await Promise.all([
       carregarEventos(),
@@ -35,7 +39,11 @@ export default function Painel() {
         <Numero rotulo="Participantes" valor={nPart} />
         <Numero rotulo="Eventos" valor={eventos.length} />
         <Numero rotulo="Inscrições abertas" valor={eventos.filter((e) => e.status === 'inscricoes_abertas').length} />
-        <Link to="/admin/solicitacoes"><Numero rotulo="Validações pendentes" valor={nPend} destaque={nPend > 0} /></Link>
+        {podeValidar ? (
+          <Link to="/admin/solicitacoes"><Numero rotulo="Validações pendentes" valor={nPend} destaque={nPend > 0} /></Link>
+        ) : (
+          <Numero rotulo="Eventos realizados" valor={eventos.filter((e) => e.status === 'realizado').length} />
+        )}
       </div>
 
       {presencasPendentes.length > 0 && (

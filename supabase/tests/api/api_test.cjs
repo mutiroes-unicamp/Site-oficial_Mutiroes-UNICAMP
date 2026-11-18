@@ -40,7 +40,7 @@ async function todos(montar) {
   await t('cadastro no Auth sem convite', () => deveFalhar(pub.auth.signUp({ email: 'alguem@gmail.com', password: SENHA })))
 
   console.log('PRIMEIRO ADMIN (convite pelo SQL Editor + primeiro acesso)')
-  sql(`insert into convites_admin (ra, nome, papel) values ('${RA_ADM}', 'Admin Teste', 'admin') on conflict (ra) do nothing`)
+  sql(`insert into convites_admin (ra, nome, cargo, papel) values ('${RA_ADM}', 'Admin Teste', 'Capitã', 'admin') on conflict (ra) do nothing`)
   const adm = novo()
   await t('primeiro acesso (signUp com convite)', async () => { const r = ok(await adm.auth.signUp({ email: emailAdmin(RA_ADM), password: SENHA })); if (!r.session) throw new Error('sem sessão'); return 'sessão criada' })
   await t('login RA + senha', async () => { ok(await adm.auth.signInWithPassword({ email: emailAdmin(RA_ADM), password: SENHA })); return 'ok' })
@@ -91,6 +91,13 @@ async function todos(montar) {
   await t('convidado faz primeiro acesso', async () => { ok(await org.auth.signUp({ email: emailAdmin(RA_ORG), password: SENHA })); return 'ok' })
   await t('organizador NÃO convida', () => deveFalhar(org.from('convites_admin').insert({ ra: '900003', nome: 'X' })))
   await t('organizador lê participantes', async () => { const p = await org.from('participantes').select('id', { count: 'exact', head: true }); if (p.error) throw p.error; return p.count })
+  await t('organizador SEM cargo não vê solicitações', async () => { const n = ok(await org.from('solicitacoes_validacao').select('id')).length; if (n) throw new Error(n + ' visíveis'); return '0 visíveis' })
+  await t('…mas vê os totais validados no saldo', async () => { const s = ok(await org.from('saldo_horas').select('horas_validadas')); return s.reduce((a, x) => a + Number(x.horas_validadas), 0) + ' h validadas' })
+  await t('organizador SEM cargo não se dá cargo de Vice', async () => {
+    await org.from('organizadores').update({ cargo: 'Vice-capitão' }).eq('ra', RA_ORG)   // RLS: só admin altera membros
+    const c = sql(`select coalesce(cargo, '(nenhum)') from organizadores where ra='${RA_ORG}'`)
+    if (c !== '(nenhum)') throw new Error('cargo mudou para ' + c); return 'cargo continua (nenhum)'
+  })
   await t('não remove o último admin', () => deveFalhar(adm.rpc('remover_organizador', { p_user_id: sql(`select user_id from organizadores where ra='${RA_ADM}'`) })))
   await t('redefinir acesso do organizador', async () => {
     ok(await adm.rpc('redefinir_acesso_admin', { p_user_id: sql(`select user_id from organizadores where ra='${RA_ORG}'`) }))
